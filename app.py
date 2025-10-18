@@ -12,7 +12,7 @@ from typing import Dict, List, Any
 load_dotenv()
 
 # Configure OpenAI
-openai.api_key = os.getenv("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")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Page configuration
 st.set_page_config(
