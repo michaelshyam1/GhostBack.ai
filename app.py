@@ -142,7 +142,8 @@ col1, col2, col3 = st.columns([1, 1, 1])
 
 with col2:
     if st.button("Let's Start", type="primary", use_container_width=True):
-        st.switch_page("pages/1_💬_Chat.py")
+        st.markdown("**Redirecting to Chat page...**")
+        st.markdown("Please click on '💬 Chat' in the sidebar to continue.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
