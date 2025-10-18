@@ -7,6 +7,7 @@ from collections import Counter
 import os
 from dotenv import load_dotenv
 from typing import Dict, List, Any
+from safety_analyzer import EmotionalSafetyAnalyzer
 
 # Load environment variables
 load_dotenv()
@@ -578,6 +579,13 @@ Write gentle, honest observations about their communication style. Be compassion
         
         # Chat input
         if prompt := st.chat_input("Type your message..."):
+            # Initialize safety analyzer if not exists
+            if 'safety_analyzer' not in st.session_state:
+                st.session_state.safety_analyzer = EmotionalSafetyAnalyzer()
+            
+            # Safety analysis of user message
+            safety_analysis = st.session_state.safety_analyzer.analyze_message_safety(prompt)
+            
             # Add user message
             st.session_state.chat_history.append({
                 "role": "user",
@@ -588,7 +596,36 @@ Write gentle, honest observations about their communication style. Be compassion
             with st.chat_message("user"):
                 st.write(prompt)
             
-            # Generate AI response
+            # Show safety warning if needed
+            if safety_analysis['warning_level'] != 'none':
+                warning_level = safety_analysis['warning_level']
+                warning_colors = {
+                    'low': '🟡',
+                    'medium': '🟠', 
+                    'high': '🔴',
+                    'crisis': '🚨'
+                }
+                
+                with st.chat_message("assistant"):
+                    st.warning(f"{warning_colors.get(warning_level, '⚠️')} **Safety Alert - {warning_level.upper()}**")
+                    
+                    for warning in safety_analysis['warnings']:
+                        st.write(f"• {warning['message']}")
+                    
+                    if warning_level == 'crisis':
+                        st.error("**IMMEDIATE SUPPORT NEEDED**")
+                        st.write("Please call a crisis helpline immediately:")
+                        st.write("• **988** (US National Suicide Prevention Lifeline)")
+                        st.write("• **Text HOME to 741741** (Crisis Text Line)")
+                        st.write("• **Your local emergency number**")
+                        st.stop()  # Stop the conversation for crisis
+                    elif warning_level == 'high':
+                        st.error("**EMOTIONAL OVERLOAD DETECTED**")
+                        st.write("Please take a break and care for yourself.")
+                        st.write("Consider talking to someone you trust about how you're feeling.")
+                        st.stop()  # Pause conversation for high risk
+            
+            # Generate AI response (only if not stopped by safety)
             with st.chat_message("assistant"):
                 with st.spinner(f"{st.session_state.ghost_name} is typing..."):
                     response = st.session_state.persona.generate_response(
