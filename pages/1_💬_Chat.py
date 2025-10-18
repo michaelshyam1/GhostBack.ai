@@ -8,13 +8,14 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, List, Any
 from safety_analyzer import EmotionalSafetyAnalyzer
+from memory_system import MemorySystem, EnhancedAIPersona
+from photo_handler import PhotoHandler
 
 # Load environment variables
 load_dotenv()
 
-# Configure OpenAI - REPLACE WITH YOUR KEY
+# Configure OpenAI
 openai.api_key = ""
-
 # Page configuration
 st.set_page_config(
     page_title="Chat - GhostBack.ai",
@@ -47,6 +48,14 @@ st.markdown("""
         border-radius: 0.5rem;
         margin-bottom: 2rem;
         border: 1px solid #667eea30;
+    }
+    .memory-hint {
+        background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%);
+        padding: 0.5rem 1rem;
+        border-radius: 0.3rem;
+        color: white;
+        font-size: 0.9rem;
+        margin: 0.5rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -185,19 +194,17 @@ class ChatAnalyzer:
             "avg_sentiment": round(avg_sentiment, 3),
             "tone": tone,
             "common_starters": common_starters,
-            "sample_messages": texts[:15]  # MORE examples for better learning
+            "sample_messages": texts[:15]
         }
 
 class AIPersona:
-    """Generates AI persona based on chat analysis."""
+    """Generates AI persona based on chat analysis (Legacy - kept for backward compatibility)."""
     
     def __init__(self):
         pass
     
     def create_system_prompt(self, analysis: Dict[str, Any], ghost_name: str) -> str:
         """Create the system prompt for the AI persona."""
-        
-        # Get more examples
         examples = analysis['sample_messages'][:10]
         quirks_text = ", ".join(analysis['quirks']) if analysis['quirks'] else "none"
         emojis_text = " ".join(analysis['top_emojis'][:5]) if analysis['top_emojis'] else "none"
@@ -222,16 +229,12 @@ RULES:
 5. Don't use formal language or sound like an AI
 6. Reply naturally to the ACTUAL message you receive
 
-BAD: "but we can go next week? 😂" (random "but" - what are you responding to?)
-GOOD: "next week works! 😂"
-
 You are {ghost_name}. Text like them. Respond to what the user ACTUALLY says."""
         
         return prompt
     
     def generate_response(self, messages: List[Dict], analysis: Dict, ghost_name: str) -> str:
         """Generate AI response based on conversation history."""
-        
         if not openai.api_key:
             return "⚠️ OpenAI API key not configured."
         
@@ -239,14 +242,12 @@ You are {ghost_name}. Text like them. Respond to what the user ACTUALLY says."""
             system_prompt = self.create_system_prompt(analysis, ghost_name)
             conversation = [{"role": "system", "content": system_prompt}]
             
-            # Add conversation history ONLY (no extra priming that could confuse context)
-            for msg in messages[-8:]:  # Last 8 messages for context
+            for msg in messages[-8:]:
                 conversation.append({
                     "role": "user" if msg["role"] == "user" else "assistant",
                     "content": msg["content"]
                 })
             
-            # Calculate token limit based on their style
             target_tokens = int(analysis['avg_words'] * 5)
             max_response_tokens = max(40, min(target_tokens, 150))
             
@@ -254,7 +255,7 @@ You are {ghost_name}. Text like them. Respond to what the user ACTUALLY says."""
                 model="gpt-4o-mini",
                 messages=conversation,
                 max_tokens=max_response_tokens,
-                temperature=0.85  # Balanced - natural but not too creative
+                temperature=0.85
             )
             
             return response.choices[0].message.content
@@ -284,8 +285,14 @@ def main():
         st.session_state.show_insights = False
     if 'show_closure' not in st.session_state:
         st.session_state.show_closure = False
+    if 'user_photo' not in st.session_state:
+        st.session_state.user_photo = None
+    if 'partner_photo' not in st.session_state:
+        st.session_state.partner_photo = None
+    if 'photo_handler' not in st.session_state:
+        st.session_state.photo_handler = PhotoHandler()
     
-    # Sidebar - Profile info and settings
+    # Sidebar
     with st.sidebar:
         st.title("👻 GhostBack.ai")
         
@@ -317,6 +324,29 @@ def main():
                 st.markdown("**Favorite emojis:**")
                 st.write(" ".join(analysis['top_emojis'][:5]))
             
+            # NEW: Memory Search Interface
+            if 'memory_system' in st.session_state:
+                st.markdown("---")
+                st.subheader("🔍 Search Memories")
+                
+                search_query = st.text_input("Search past conversations", placeholder="e.g., trip, dinner, party")
+                
+                if search_query:
+                    memories = st.session_state.memory_system.search_memories(search_query, top_k=3)
+                    
+                    if memories:
+                        st.caption(f"Found {len(memories)} relevant memories:")
+                        for mem in memories:
+                            with st.expander(f"💬 {mem['message']['timestamp']}", expanded=False):
+                                st.text(mem['context_text'])
+                    else:
+                        st.caption("No memories found")
+                
+                # Memory stats
+                summary = st.session_state.memory_system.get_conversation_summary()
+                st.caption(f"📊 {summary['total_events']} events indexed")
+                st.caption(f"❓ {summary['total_questions']} questions found")
+            
             st.markdown("---")
             
             if st.button("🗑️ Clear & Start Over", use_container_width=True):
@@ -325,7 +355,7 @@ def main():
         else:
             st.info("Upload a chat to get started")
     
-    # TOP BAR - Action buttons (when analysis is ready)
+    # TOP BAR - Action buttons
     if st.session_state.analysis:
         st.markdown('<div class="top-bar">', unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 1, 3])
@@ -344,7 +374,7 @@ def main():
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Show insights panel if toggled
+        # Show insights panel
         if st.session_state.show_insights:
             with st.expander("📈 Conversation Insights", expanded=True):
                 analysis = st.session_state.analysis
@@ -427,7 +457,7 @@ def main():
                             f"{change:+.2f} from original"
                         )
         
-        # Show closure letter if toggled
+        # Show closure letter
         if st.session_state.show_closure:
             with st.expander("💭 Your Closure Letter", expanded=True):
                 if 'closure_letter' not in st.session_state:
@@ -460,7 +490,7 @@ Write gentle, honest observations about their communication style. Be compassion
     
     # MAIN CONTENT AREA
     if not st.session_state.analysis:
-        # UPLOAD PHASE - Main page
+        # UPLOAD PHASE
         st.markdown("## 📱 Upload Your Chat History")
         
         st.info("""
@@ -469,6 +499,27 @@ Write gentle, honest observations about their communication style. Be compassion
         2. Tap the contact/group name → Export Chat → Without Media
         3. Copy the text and paste below
         """)
+        
+        # Photo uploads
+        st.markdown("---")
+        st.markdown("## 📸 Upload Profile Photos (Optional)")
+        st.caption("Add photos to personalize your chat experience")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Your Photo**")
+            user_photo = st.session_state.photo_handler.upload_user_photo()
+            if user_photo:
+                st.session_state.user_photo = user_photo
+        
+        with col2:
+            st.markdown("**Partner's Photo**")
+            partner_photo = st.session_state.photo_handler.upload_partner_photo()
+            if partner_photo:
+                st.session_state.partner_photo = partner_photo
+        
+        st.markdown("---")
         
         chat_text = st.text_area(
             "Paste your chat export here",
@@ -494,7 +545,7 @@ Write gentle, honest observations about their communication style. Be compassion
                             st.success(f"Found {len(messages)} messages!")
                             st.rerun()
         
-        # PARTICIPANT SELECTION - Main page
+        # PARTICIPANT SELECTION
         if 'participants' in st.session_state:
             st.markdown("---")
             st.markdown("## 💬 Who do you want to talk to?")
@@ -515,7 +566,19 @@ Write gentle, honest observations about their communication style. Be compassion
                             st.session_state.analysis = analysis
                             st.session_state.ghost_name = person1
                             st.session_state.chat_history = []
-                            del st.session_state.parsed_messages
+                            
+                            # KEEP parsed_messages for memory system!
+                            st.session_state.original_messages = st.session_state.parsed_messages
+                            
+                            # Initialize memory system
+                            st.session_state.memory_system = MemorySystem(
+                                st.session_state.original_messages,
+                                person1
+                            )
+                            
+                            # Use enhanced persona with memory
+                            st.session_state.persona = EnhancedAIPersona(st.session_state.memory_system)
+                            
                             del st.session_state.participants
                             st.success(f"✅ Ready to chat with {person1}!")
                             st.rerun()
@@ -532,7 +595,19 @@ Write gentle, honest observations about their communication style. Be compassion
                             st.session_state.analysis = analysis
                             st.session_state.ghost_name = person2
                             st.session_state.chat_history = []
-                            del st.session_state.parsed_messages
+                            
+                            # KEEP parsed_messages for memory system!
+                            st.session_state.original_messages = st.session_state.parsed_messages
+                            
+                            # Initialize memory system
+                            st.session_state.memory_system = MemorySystem(
+                                st.session_state.original_messages,
+                                person2
+                            )
+                            
+                            # Use enhanced persona with memory
+                            st.session_state.persona = EnhancedAIPersona(st.session_state.memory_system)
+                            
                             del st.session_state.participants
                             st.success(f"✅ Ready to chat with {person2}!")
                             st.rerun()
@@ -541,10 +616,21 @@ Write gentle, honest observations about their communication style. Be compassion
         # CHAT INTERFACE
         st.markdown(f"### 💬 Chat with {st.session_state.ghost_name}")
         
+        # NEW: Memory hint if available
+        if 'memory_system' in st.session_state:
+            st.markdown(
+                '<div class="memory-hint">💡 Try asking about past events: "Why did you stop responding?" or "Remember when we went to...?"</div>',
+                unsafe_allow_html=True
+            )
+        
         # Display chat history
         for message in st.session_state.chat_history:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
+            if message["role"] == "user":
+                with st.chat_message("user", avatar=st.session_state.user_photo):
+                    st.write(message["content"])
+            else:
+                with st.chat_message("assistant", avatar=st.session_state.partner_photo):
+                    st.write(message["content"])
         
         # Chat input
         if prompt := st.chat_input(f"Message {st.session_state.ghost_name}..."):
@@ -562,7 +648,7 @@ Write gentle, honest observations about their communication style. Be compassion
             })
             
             # Show user message
-            with st.chat_message("user"):
+            with st.chat_message("user", avatar=st.session_state.user_photo):
                 st.write(prompt)
             
             # Show safety warning if needed
@@ -594,14 +680,24 @@ Write gentle, honest observations about their communication style. Be compassion
                         st.write("Consider talking to someone you trust about how you're feeling.")
                         st.stop()  # Pause conversation for high risk
             
-            # Generate AI response (only if not stopped by safety)
-            with st.chat_message("assistant"):
+            # Generate AI response with MEMORY (only if not stopped by safety)
+            with st.chat_message("assistant", avatar=st.session_state.partner_photo):
                 with st.spinner(f"{st.session_state.ghost_name} is typing..."):
-                    response = st.session_state.persona.generate_response(
-                        st.session_state.chat_history,
-                        st.session_state.analysis,
-                        st.session_state.ghost_name
-                    )
+                    # Check if we have enhanced persona with memory
+                    if hasattr(st.session_state.persona, 'generate_response_with_memory'):
+                        response = st.session_state.persona.generate_response_with_memory(
+                            st.session_state.chat_history,
+                            st.session_state.analysis,
+                            st.session_state.ghost_name,
+                            prompt  # Pass user message for memory detection
+                        )
+                    else:
+                        # Fallback to old method
+                        response = st.session_state.persona.generate_response(
+                            st.session_state.chat_history,
+                            st.session_state.analysis,
+                            st.session_state.ghost_name
+                        )
                     st.write(response)
             
             # Add to history
