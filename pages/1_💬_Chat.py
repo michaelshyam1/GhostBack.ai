@@ -13,8 +13,8 @@ from tts_integration import TTSIntegration
 # Load environment variables
 load_dotenv()
 
-# Configure OpenAI - REPLACE WITH YOUR KEY
-openai.api_key = ""
+# Configure OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Page configuration
 st.set_page_config(
