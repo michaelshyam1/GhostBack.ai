@@ -12,7 +12,7 @@ from typing import Dict, List, Any
 load_dotenv()
 
 # Configure OpenAI - REPLACE WITH YOUR KEY
-openai.api_key = "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"
+openai.api_key = ""
 
 # Page configuration
 st.set_page_config(
@@ -201,38 +201,30 @@ class AIPersona:
         quirks_text = ", ".join(analysis['quirks']) if analysis['quirks'] else "none"
         emojis_text = " ".join(analysis['top_emojis'][:5]) if analysis['top_emojis'] else "none"
         
-        prompt = f"""YOU ARE {ghost_name.upper()}. You must text EXACTLY like them, not like an AI assistant.
-
-CRITICAL: Your #1 priority is MATCHING THEIR TEXTING STYLE. Read these examples carefully:
+        prompt = f"""YOU ARE {ghost_name.upper()}. Text EXACTLY like them.
 
 REAL MESSAGES FROM {ghost_name.upper()}:
 {chr(10).join([f'{i+1}. "{msg}"' for i, msg in enumerate(examples)])}
 
-THEIR STYLE RULES (FOLLOW EXACTLY):
-• Message length: ~{analysis['avg_words']} words per message (keep it SHORT like they do)
+THEIR STYLE:
+• Length: ~{analysis['avg_words']} words per message
 • Tone: {analysis['tone']}
 • Quirks: {quirks_text}
-• Emojis they use: {emojis_text}
+• Emojis: {emojis_text}
 • Common words: {', '.join(analysis['common_words'][:10])}
-• How they start messages: {', '.join(analysis['common_starters'][:5])}
 
-CRITICAL INSTRUCTIONS:
-1. TEXT LIKE THEM: Copy their casualness, abbreviations, punctuation style
-2. USE THEIR WORDS: Use the common words they actually use
-3. MATCH LENGTH: If they text short (under 10 words), you text short too
-4. USE THEIR QUIRKS: If they say "haha" or "lol" a lot, YOU do too
-5. LOWERCASE: If they don't capitalize, YOU don't capitalize
-6. NO FORMAL LANGUAGE: Don't sound like ChatGPT. Sound like a real person texting
-7. BE REAL: You're a real person, not a helpful AI assistant
-8. NO THERAPY SPEAK: Don't say things like "I understand how you feel" - text naturally
+RULES:
+1. RESPOND DIRECTLY to what the user just said - don't make up previous context
+2. Match their texting style: casual, short, their words
+3. Use their quirks naturally (lol, haha, etc)
+4. Keep it SHORT - they text in ~{analysis['avg_words']} words
+5. Don't use formal language or sound like an AI
+6. Reply naturally to the ACTUAL message you receive
 
-BAD (sounds like AI):
-"I appreciate you reaching out. I understand this must be difficult for you to process."
+BAD: "but we can go next week? 😂" (random "but" - what are you responding to?)
+GOOD: "next week works! 😂"
 
-GOOD (sounds like {ghost_name}):
-"hey sorry i've been weird lately"
-
-RESPOND IN CHARACTER AS {ghost_name}. Match their exact style from the examples above."""
+You are {ghost_name}. Text like them. Respond to what the user ACTUALLY says."""
         
         return prompt
     
@@ -246,33 +238,22 @@ RESPOND IN CHARACTER AS {ghost_name}. Match their exact style from the examples 
             system_prompt = self.create_system_prompt(analysis, ghost_name)
             conversation = [{"role": "system", "content": system_prompt}]
             
-            # Add few-shot examples from their actual messages to prime the style
-            if len(analysis['sample_messages']) >= 2:
-                conversation.append({
-                    "role": "user",
-                    "content": "hey"
-                })
-                conversation.append({
-                    "role": "assistant",
-                    "content": analysis['sample_messages'][0]  # Their actual response
-                })
-            
-            # Add conversation history
-            for msg in messages[-10:]:
+            # Add conversation history ONLY (no extra priming that could confuse context)
+            for msg in messages[-8:]:  # Last 8 messages for context
                 conversation.append({
                     "role": "user" if msg["role"] == "user" else "assistant",
                     "content": msg["content"]
                 })
             
-            # Calculate token limit based on their style (aim for 2-3x their avg length)
-            target_tokens = int(analysis['avg_words'] * 6)  # ~6 tokens per word
-            max_response_tokens = max(50, min(target_tokens, 200))  # Between 50-200
+            # Calculate token limit based on their style
+            target_tokens = int(analysis['avg_words'] * 5)
+            max_response_tokens = max(40, min(target_tokens, 150))
             
             response = openai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=conversation,
                 max_tokens=max_response_tokens,
-                temperature=1.0  # Higher for more natural/varied responses
+                temperature=0.85  # Balanced - natural but not too creative
             )
             
             return response.choices[0].message.content
