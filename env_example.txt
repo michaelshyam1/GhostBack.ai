@@ -1,5 +1,8 @@
 # OpenAI API Configuration
-OPENAI_API_KEY=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
+OPENAI_API_KEY=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
+
+# ElevenLabs API Configuration (for voice cloning)
+ELEVENLABS_API_KEY=""
 
 # Optional: Custom model settings
 # OPENAI_MODEL=gpt-3.5-turbo

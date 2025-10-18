@@ -8,6 +8,7 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, List, Any
 from safety_analyzer import EmotionalSafetyAnalyzer
+from tts_integration import TTSIntegration
 
 # Load environment variables
 load_dotenv()
@@ -261,6 +262,41 @@ You are {ghost_name}. Text like them. Respond to what the user ACTUALLY says."""
             
         except Exception as e:
             return f"❌ Error: {str(e)}"
+    
+def _generate_local_tts_fallback(response: str):
+    """Generate local TTS as fallback."""
+    with st.spinner("Generating voice..."):
+        tts_result = st.session_state.tts_integration.generate_speech_for_message(
+            response, is_ai_response=True
+        )
+
+        if tts_result["success"]:
+            # Display voice characteristics
+            st.caption(f"🎤 Voice: {tts_result['voice_description']}")
+
+            # Display TTS parameters for external TTS services
+            with st.expander("🔧 TTS Parameters"):
+                parameters = tts_result["parameters"]
+                st.json({
+                    "voice_type": parameters["voice_type"],
+                    "pitch": f"{parameters['pitch']:.0f} Hz",
+                    "tempo": f"{parameters['tempo']:.0f} BPM",
+                    "energy": f"{parameters['energy']:.2f}",
+                    "emotional_tone": parameters["emotional_tone"]
+                })
+
+                # Generate TTS instructions for external services
+                instructions = st.session_state.tts_integration.create_tts_instructions(parameters)
+                st.write("**For Azure Speech Service:**")
+                st.code(f"""
+voice = "{instructions['voice']}"
+style = "{instructions['style']}"
+pitch = "{instructions['prosody']['pitch']}"
+rate = "{instructions['prosody']['rate']}"
+volume = "{instructions['prosody']['volume']}"
+                """, language="python")
+        else:
+            st.error(f"TTS generation failed: {tts_result['error']}")
 
 def main():
     """Main application."""
@@ -294,6 +330,91 @@ def main():
         st.subheader("🛡️ Safety Monitor")
         st.success("✅ **Active** - Monitoring for emotional safety")
         st.caption("The safety consultant watches over your conversation and provides support when needed.")
+        
+        # TTS Voice Analysis
+        st.markdown("---")
+        st.subheader("🎤 Voice Analysis")
+        
+        # Initialize TTS integration with ElevenLabs
+        if 'tts_integration' not in st.session_state:
+            # Get ElevenLabs API key from environment
+            elevenlabs_key = os.getenv('ELEVENLABS_API_KEY')
+            if not elevenlabs_key:
+                # Use the provided API key
+                elevenlabs_key = "sk_56f052abde4435779cd252bf82654fb333801488dacf9f75"
+            
+            st.session_state.tts_integration = TTSIntegration(elevenlabs_api_key=elevenlabs_key)
+        
+        # Voice sample upload
+        uploaded_voice = st.file_uploader(
+            "Upload voice sample (WAV/MP3/M4A)",
+            type=['wav', 'mp3', 'm4a'],
+            help="Upload a voice sample to analyze and match the person's speaking style. Note: M4A files require FFmpeg to be installed."
+        )
+        
+        # Show M4A requirements info
+        with st.expander("ℹ️ M4A File Requirements"):
+            st.write("**M4A files require FFmpeg to be installed on your system.**")
+            st.write("If you encounter errors with M4A files, please:")
+            st.write("1. **Install FFmpeg** (recommended):")
+            st.write("   - Windows: `choco install ffmpeg` (if you have Chocolatey)")
+            st.write("   - Or download from: https://ffmpeg.org/download.html")
+            st.write("2. **Convert to WAV/MP3** instead (easier option)")
+            st.write("3. **Use online converters** to convert M4A to WAV")
+        
+        if uploaded_voice is not None:
+            with st.spinner("Analyzing voice sample..."):
+                result = st.session_state.tts_integration.process_voice_sample(uploaded_voice)
+                
+            if result["success"]:
+                file_format = result.get('file_format', 'unknown').upper()
+                st.success(f"✅ Voice profile created! (Format: {file_format})")
+
+                # Display voice characteristics
+                profile_summary = st.session_state.tts_integration.get_voice_profile_summary()
+                if profile_summary:
+                    st.write("**Voice Characteristics:**")
+                    st.write(f"• Type: {profile_summary['voice_type']}")
+                    st.write(f"• Tone: {profile_summary['emotional_tone']}")
+                    st.write(f"• Pitch: {profile_summary['base_pitch']:.0f} Hz")
+                    st.write(f"• Tempo: {profile_summary['tempo']:.0f} BPM")
+                    st.write(f"• Clarity: {profile_summary['clarity']:.2f}")
+                    st.write(f"• Format: {file_format}")
+            else:
+                st.error(f"❌ Voice analysis failed: {result['error']}")
+        
+        # TTS Settings
+        st.markdown("---")
+        st.subheader("🔊 Text-to-Speech")
+        
+        enable_tts = st.checkbox("Enable TTS for AI responses", value=False, key="enable_tts")
+        if enable_tts:
+            # Check for ElevenLabs cloned voice
+            has_elevenlabs_voice = (st.session_state.tts_integration.elevenlabs and 
+                                  st.session_state.tts_integration.elevenlabs.voice_id)
+            
+            if has_elevenlabs_voice:
+                st.success("🎭 Cloned voice enabled")
+                st.caption(f"AI responses will be spoken in {st.session_state.ghost_name}'s cloned voice")
+                
+                # Show voice info
+                voice_info = st.session_state.tts_integration.get_elevenlabs_voice_info()
+                if voice_info and 'error' not in voice_info:
+                    st.info(f"**Voice:** {voice_info['name']}")
+            elif st.session_state.get('cloned_voice_id'):
+                st.info("🎭 Cloned voice available from Voice Cloning page")
+                if st.button("🔄 Transfer Cloned Voice", key="transfer_voice"):
+                    if st.session_state.tts_integration.elevenlabs:
+                        st.session_state.tts_integration.elevenlabs.voice_id = st.session_state.cloned_voice_id
+                        st.session_state.tts_integration.elevenlabs.voice_name = st.session_state.get('cloned_voice_name', 'Cloned Voice')
+                        st.success("✅ Voice transferred! Enable TTS to use it.")
+                        st.rerun()
+            elif st.session_state.tts_integration.voice_profile:
+                st.success("✅ Voice matching enabled")
+                st.caption("AI responses will be generated with matching voice characteristics")
+            else:
+                st.warning("⚠️ Upload a voice sample to enable voice matching")
+                st.info("💡 Go to the Voice Cloning page to create a cloned voice!")
         
         if st.session_state.analysis:
             st.markdown("---")
@@ -545,6 +666,15 @@ Write gentle, honest observations about their communication style. Be compassion
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.write(message["content"])
+                
+                # Show audio controls if message has audio data
+                if message.get("audio_data") and message["role"] == "assistant":
+                    if message.get("voice_type") == "cloned":
+                        st.audio(message["audio_data"], format="audio/mp3")
+                        st.caption(f"🎭 {st.session_state.ghost_name}'s cloned voice")
+                    else:
+                        st.audio(message["audio_data"], format="audio/wav")
+                        st.caption("🎤 Generated voice")
         
         # Chat input
         if prompt := st.chat_input(f"Message {st.session_state.ghost_name}..."):
@@ -604,13 +734,113 @@ Write gentle, honest observations about their communication style. Be compassion
                     )
                     st.write(response)
             
-            # Add to history
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": response
-            })
+            # Generate TTS if enabled
+            if st.session_state.get('enable_tts', False):
+                # Check if we have ElevenLabs cloned voice available
+                has_elevenlabs_voice = (st.session_state.tts_integration.elevenlabs and 
+                                      st.session_state.tts_integration.elevenlabs.voice_id)
+                
+                # Check if we have a cloned voice from the voice cloning page
+                if st.session_state.get('cloned_voice_id') and not has_elevenlabs_voice:
+                    # Transfer the voice ID to the TTS integration
+                    if st.session_state.tts_integration.elevenlabs:
+                        st.session_state.tts_integration.elevenlabs.voice_id = st.session_state.cloned_voice_id
+                        st.session_state.tts_integration.elevenlabs.voice_name = st.session_state.get('cloned_voice_name', 'Cloned Voice')
+                        has_elevenlabs_voice = True
+                        st.success("✅ Cloned voice transferred from Voice Cloning page!")
+                
+                if has_elevenlabs_voice:
+                    # Use ElevenLabs cloned voice
+                    with st.spinner("🎭 Generating speech with cloned voice..."):
+                        tts_result = st.session_state.tts_integration.generate_speech_elevenlabs(response)
+                        
+                        if tts_result["success"]:
+                            # Play the audio automatically
+                            st.audio(tts_result["audio_data"], format="audio/mp3", autoplay=True)
+                            st.caption(f"🎤 Speaking as {st.session_state.ghost_name} (cloned voice)")
+                            
+                            # Store audio in chat history
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": response,
+                                "audio_data": tts_result["audio_data"],
+                                "voice_type": "cloned"
+                            })
+                        else:
+                            st.error(f"❌ Cloned voice generation failed: {tts_result['error']}")
+                            # Fallback to local TTS
+                            _generate_local_tts_fallback(response)
+                            # Add to history without audio
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": response
+                            })
+                else:
+                    # Use local TTS as fallback
+                    _generate_local_tts_fallback(response)
+                    # Add to history without audio
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": response
+                    })
+            else:
+                # No TTS - just add to history
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": response
+                })
             
             st.rerun()
+        
+        # Audio generation buttons - ALWAYS VISIBLE when TTS is enabled
+        if st.session_state.get('enable_tts', False) and st.session_state.chat_history:
+            # Get the last assistant message
+            last_assistant_message = None
+            for message in reversed(st.session_state.chat_history):
+                if message["role"] == "assistant":
+                    last_assistant_message = message
+                    break
+            
+            if last_assistant_message:
+                st.subheader("🔊 Generate Audio for Last Response")
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    if st.button("🔊 Generate Audio (Local)", key="generate_local_audio"):
+                        st.write("🔄 Generating local audio...")
+                        try:
+                            # Try simple method first
+                            audio_result = st.session_state.tts_integration.generate_audio_simple(last_assistant_message["content"])
+                            
+                            if not audio_result["success"]:
+                                # Fallback to original method
+                                st.write("⚠️ Trying alternative method...")
+                                audio_result = st.session_state.tts_integration.generate_audio_file(last_assistant_message["content"])
+                            
+                            if audio_result["success"]:
+                                st.audio(audio_result["audio_data"], format="audio/wav")
+                                st.success("✅ Audio generated successfully!")
+                                st.write(f"📊 Audio size: {len(audio_result['audio_data'])} bytes")
+                            else:
+                                st.error(f"❌ Audio generation failed: {audio_result['error']}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+                
+                with col2:
+                    if st.button("🌐 Generate Audio (Google)", key="generate_google_audio"):
+                        st.write("🔄 Generating Google TTS audio...")
+                        try:
+                            audio_result = st.session_state.tts_integration.generate_audio_gtts(last_assistant_message["content"])
+                            
+                            if audio_result["success"]:
+                                st.audio(audio_result["audio_data"], format="audio/mp3")
+                                st.success("✅ Google TTS audio generated!")
+                                st.write(f"📊 Audio size: {len(audio_result['audio_data'])} bytes")
+                            else:
+                                st.error(f"❌ Google TTS failed: {audio_result['error']}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+            
 
 if __name__ == "__main__":
     main()
